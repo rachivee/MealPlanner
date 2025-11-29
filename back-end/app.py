@@ -1,16 +1,17 @@
-# file: backend/app.py
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from database import get_db_connection
-# FIX: Import dari nama file yang sudah diperbaiki (ai_engine)
 from ai_engine import solve_meal_plan 
 
+# Konfigurasi Aplikasi
 app = Flask(__name__)
-# Izinkan akses dari mana saja (mempermudah development)
 CORS(app, resources={r"/*": {"origins": "*"}})
+
+# Endpoint API
 
 @app.route('/allergens', methods=['GET'])
 def get_allergens():
+    # Endpoint untuk mengambil daftar alergi yang tersedia di database.
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT id, name FROM allergens")
@@ -21,12 +22,13 @@ def get_allergens():
 
 @app.route('/generate-menu', methods=['POST'])
 def generate_menu():
+    # Endpoint utama untuk menghasilkan rencana makan.
     try:
-        # 1. Terima Data dari Frontend
+        # Terima data dari frontend
         user_input = request.json 
         print(f"\n[REQUEST] User Input: {user_input}")
 
-        # 2. Ambil Data dari Database
+        # Koneksi dan ambil data dari database
         conn = get_db_connection()
         if not conn:
             print("[ERROR] Database Connection Failed")
@@ -34,11 +36,11 @@ def generate_menu():
             
         cursor = conn.cursor(dictionary=True)
         
-        # Ambil Resep
+        # Ambil semua resep
         cursor.execute("SELECT * FROM recipes")
         all_recipes = cursor.fetchall()
         
-        # Ambil Detail Bahan & Harga
+        # Ambil detail bahan & harga untuk kalkulasi
         cursor.execute("""
             SELECT 
                 ri.recipe_id, 
@@ -55,11 +57,11 @@ def generate_menu():
         cursor.close()
         conn.close()
 
-        # 3. Jalankan AI Engine
+        # Jalankan AI Engine
         print("[PROCESS] Sedang menghitung menu...")
         meal_plan = solve_meal_plan(user_input, all_recipes, all_recipe_details)
 
-        # 4. Cek Hasil sebelum dikirim
+        # Cek Hasil sebelum dikirim
         if isinstance(meal_plan, dict) and "error" in meal_plan:
             print(f"[RESULT] Gagal: {meal_plan['error']}")
         else:
@@ -72,5 +74,5 @@ def generate_menu():
         return jsonify({"error": "Terjadi kesalahan internal server"}), 500
 
 if __name__ == '__main__':
-    print("🚀 Server Meal Planner Berjalan di http://127.0.0.1:5000")
+    print("Server Meal Planner Berjalan di http://127.0.0.1:5000")
     app.run(debug=True, port=5000)

@@ -2,46 +2,47 @@
 import { ref, computed, onMounted } from "vue";
 import axios from "axios";
 
+// Input user
 const days = ref(1);
 const calories = ref(2000);
 const budget = ref(100000);
-
 const myPantry = ref([]);
 const pantryInput = ref("");
 
-// --- PERUBAHAN 1: State untuk Alergi (Dropdown/Checkbox) ---
-const availableAllergens = ref([]); // List alergi dari Database
-const selectedAllergies = ref([]);  // ID alergi yang dipilih user
+// Data alergi
+const availableAllergens = ref([]); 
+const selectedAllergies = ref([]); 
 
+// Hasil dan status UI
 const menuResult = ref(null);
 const loading = ref(false);
 const errorMessage = ref("");
 const warningMessages = ref([]);
 const activeTab = ref("informasi");
 
-// --- Fetch Data Alergi saat Aplikasi Dibuka ---
+// Ambil data alergi saat aplikasi pertama kali dimuat
 onMounted(async () => {
   try {
     const response = await axios.get("http://127.0.0.1:5000/allergens");
     availableAllergens.value = response.data;
   } catch (error) {
     console.error("Gagal mengambil data alergi:", error);
-    // Opsional: Isi dummy data jika backend belum siap/error
-    // availableAllergens.value = [{id: 1, name: 'Dummy Kacang'}, {id: 2, name: 'Dummy Susu'}];
   }
 });
 
-// --- LOGIKA REALISTIC SHOPPING LIST ---
+// Menghitung total belanjaan dari semua menu yang dihasilkan
 const shoppingList = computed(() => {
   if (!menuResult.value || !Array.isArray(menuResult.value)) return [];
 
   const map = {};
 
+  // Iterasi setiap hari dan setiap waktu makan
   menuResult.value.forEach((plan) => {
     ["breakfast", "lunch", "dinner"].forEach((mealKey) => {
       const meal = plan[mealKey];
       if (!meal || !meal.missing_ingredients) return;
 
+      // Agregasi bahan yang perlu dibeli
       meal.missing_ingredients.forEach((item) => {
         if (!map[item.name]) {
           map[item.name] = {
@@ -56,6 +57,7 @@ const shoppingList = computed(() => {
     });
   });
 
+  // Konversi map ke array dan hitung harga total per item
   return Object.values(map).map((item) => {
     const packsToBuy = Math.ceil(item.totalAmount);
     const totalPrice = packsToBuy * item.price;
@@ -70,10 +72,12 @@ const shoppingList = computed(() => {
   });
 });
 
+// Total biaya keseluruhan belanja
 const totalShoppingCost = computed(() => {
   return shoppingList.value.reduce((sum, item) => sum + item.totalPrice, 0);
 });
 
+// Menu hari pertama untuk tampilan ringkas "Hari Ini"
 const todaysMenu = computed(() => {
   if (!menuResult.value || !menuResult.value[0]) return [];
   const day1 = menuResult.value[0];
@@ -85,7 +89,7 @@ const todaysMenu = computed(() => {
   return list.filter(item => item.name);
 });
 
-// Logika Pantry (Bahan yang dimiliki)
+// Logika Pantry
 const addPantry = () => {
   if (pantryInput.value.trim() !== "" && !myPantry.value.includes(pantryInput.value.toLowerCase())) {
     myPantry.value.push(pantryInput.value.toLowerCase());
@@ -107,7 +111,7 @@ const generateMenu = async () => {
       calories: calories.value,
       budget: budget.value,
       pantry: myPantry.value,
-      allergies: selectedAllergies.value, // Mengirim Array of IDs (misal: [2, 4])
+      allergies: selectedAllergies.value,
     });
 
     if (response.data.error) {
@@ -575,6 +579,7 @@ const generateMenu = async () => {
   font-weight: bold;
   margin-left: 5px;
 }
+
 .stat-badge.cost { background: #fff3cd; color: #856404; }
 .stat-badge.cal { background: #d4edda; color: #155724; }
 

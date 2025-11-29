@@ -1,9 +1,10 @@
 import heapq
 import random
 
-# --- HELPER FUNCTIONS ---
+# HELPER FUNCTIONS
 
 def group_ingredients_by_recipe(details):
+    # Mengelompokkan baris data ingredient dari database berdasarkan ID resep.
     mapping = {}
     for row in details:
         r_id = row['recipe_id']
@@ -13,25 +14,20 @@ def group_ingredients_by_recipe(details):
     return mapping
 
 def calculate_real_cost(recipe_ingredients, user_pantry):
-    """
-    Menghitung biaya resep.
-    Jika nama bahan ada di pantry (Partial Match), biayanya Rp 0.
-    """
+    # Menghitung estimasi biaya resep.
     cost = 0.0 
     missing = []
     
     for item in recipe_ingredients:
         ing_name = item['name'].lower()
-        
-        # --- LOGIKA PARTIAL MATCH (PANTRY) ---
-        # Cek apakah bahan resep 'mirip' dengan yang ada di pantry
+        # Jika bahan ada di pantry (pencocokan nama sebagian), biaya dianggap Rp 0.
         is_available = False
         for pantry_item in user_pantry:
-            if pantry_item in ing_name: # misal: "beras" in "beras putih"
+            if pantry_item in ing_name: # misal: "beras" in "beras putih".
                 is_available = True
                 break
         
-        # Jika TIDAK ADA di pantry, hitung biayanya
+        # Jika tidak ada, masukkan ke biaya belanja.
         if not is_available:
             price = float(item['price_per_unit'])
             amount = float(item['amount_needed'])
@@ -49,10 +45,11 @@ def calculate_real_cost(recipe_ingredients, user_pantry):
     return cost, missing
 
 def heuristic(current_calories, target_calories):
-    # Selisih kalori sebagai penalti
+    # Menghitung penalti berdasarkan selisih kalori saat ini dengan target (Fungsi Heuristik untuk Algoritma A*).
     return abs(target_calories - current_calories) * 2
 
 def format_output(recipe):
+    # Format data resep untuk dikirim kembali ke frontend.
     return {
         "name": recipe['name'],
         "calories": int(recipe['total_calories']),
@@ -60,30 +57,27 @@ def format_output(recipe):
         "missing_ingredients": recipe['missing'] 
     }
 
-# --- ALGORITMA INTI ---
+# LOGIKA UTAMA
 
 def solve_meal_plan(user_request, all_recipes, recipe_details):
-    print("--- MEMULAI AI (BASIC LOGIC + FIXED ALLERGY) ---")
-    
+    # Fungsi utama untuk menyusun rencana makan menggunakan algoritma A*.
+    print("--- MEMULAI AI ---")
     ingredients_map = group_ingredients_by_recipe(recipe_details)
     
-    # 1. Ambil Pantry (Lowercase)
+    # 1. Parsing Input User
     user_pantry = [item.lower() for item in user_request.get('pantry', [])]
-    
-    # 2. Ambil & Validasi Alergi (FIXED LOGIC)
-    # Masalah utamanya ada di sini sebelumnya: String vs Int
+
     raw_allergies = user_request.get('allergies', [])
     user_allergy_ids = set()
+
+    # Konversi ID alergi ke integer agar aman
     try:
-        # Kita paksa ubah setiap item jadi Integer agar cocok dengan Database
         for a in raw_allergies:
             user_allergy_ids.add(int(a))
     except ValueError:
-        print("[WARNING] Ada format alergi yang salah (bukan angka), dilewati.")
-    
-    print(f"[DEBUG] User Allergy IDs: {user_allergy_ids}")
+        pass
 
-    # 3. Ambil Budget & Kalori
+    # 2. Ambil Budget & Kalori
     try:
         target_cal = int(user_request.get('calories', 2000))
         days_needed = int(user_request.get('days', 1))
@@ -94,36 +88,33 @@ def solve_meal_plan(user_request, all_recipes, recipe_details):
     except ValueError:
         return {"error": "Input Kalori/Budget harus berupa angka valid."}
 
-    # 4. FASE FILTERING (Constraint Satisfaction)
+    # 3. Filtering Resep (Constraint Satisfaction)
     pools = {'Breakfast': [], 'Lunch': [], 'Dinner': []}
     
     for recipe in all_recipes:
         r_id = recipe['id']
         r_ings = ingredients_map.get(r_id, [])
-        
         is_safe = True
         
-        # Cek setiap bahan dalam resep
+        # Cek kandungan alergen dalam bahan
         for ing in r_ings:
             # Ambil ID Alergi dari bahan tersebut
             ing_allergen_id = ing.get('allergen_id')
-            
             # Jika bahan punya ID alergi, dan ID itu ada di daftar pantangan user
             if ing_allergen_id is not None:
                 if int(ing_allergen_id) in user_allergy_ids:
                     is_safe = False
-                    # print(f"[DEBUG] Skip {recipe['name']} karena mengandung allergen ID {ing_allergen_id}")
                     break
-        
+
+        # Jika aman, hitung biaya dan masukkan ke pool
         if is_safe:
-            # Hitung biaya jika aman
             cost, missing = calculate_real_cost(r_ings, user_pantry)
             
             recipe['real_cost'] = cost
             recipe['missing'] = missing
             recipe['total_calories'] = int(recipe['total_calories'])
             
-            # Cek Budget Global (Opsional, biar tidak terlalu berat di A*)
+            # Filter awal berdasarkan budget total
             if cost <= total_budget:
                 m_type = str(recipe['meal_type'])
                 if m_type in pools:
@@ -133,7 +124,7 @@ def solve_meal_plan(user_request, all_recipes, recipe_details):
     if not pools['Breakfast'] or not pools['Lunch'] or not pools['Dinner']:
         return {"error": "Tidak ada resep yang cocok. Coba kurangi pantangan alergi."}
 
-    # Hitung kebutuhan minimal (untuk warning)
+    # Hitung estimasi biaya minimal untuk memberi peringatan
     min_cost_bf = min((r['real_cost'] for r in pools['Breakfast']), default=0)
     min_cost_ln = min((r['real_cost'] for r in pools['Lunch']), default=0)
     min_cost_dn = min((r['real_cost'] for r in pools['Dinner']), default=0)
@@ -145,7 +136,7 @@ def solve_meal_plan(user_request, all_recipes, recipe_details):
     if total_budget < total_min_required:
         warnings.append(f"Budget Rp {total_budget:,.0f} terlalu rendah. Minimal Rp {total_min_required:,.0f}.")
 
-    # 5. FASE OPTIMASI A* (Logika Biasa / Basic A*)
+    # 4. Optimasi A* Search
     final_plan = []
     global_used_ids = set() 
     current_total_spent = 0.0
@@ -154,12 +145,12 @@ def solve_meal_plan(user_request, all_recipes, recipe_details):
         money_left = total_budget - current_total_spent
         days_remaining = days_needed - day
         
-        # Limit harian dinamis
+        # Hitung limit harian dinamis
         daily_limit = money_left - (days_remaining * min_daily_survival)
         if daily_limit < min_daily_survival:
             daily_limit = min_daily_survival
 
-        # Priority Queue: (f_score, tie_breaker, path)
+        # Inisialisasi Priority Queue A* (f_score, tie_breaker, path)
         open_set = []
         heapq.heappush(open_set, (0.0, random.random(), []))
         
@@ -176,47 +167,45 @@ def solve_meal_plan(user_request, all_recipes, recipe_details):
             
             next_type = ['Breakfast', 'Lunch', 'Dinner'][depth]
             candidates = pools[next_type]
-            # Shuffle agar hasil tidak monoton
-            random.shuffle(candidates)
+            random.shuffle(candidates) # Shuffle agar hasil bervariasi
             
             for recipe in candidates:
                 # Hitung g(n): Biaya sejauh ini
                 path_cost = sum(r['real_cost'] for r in path)
                 new_g = path_cost + recipe['real_cost']
                 
-                # Hard Constraint: Budget Harian
+                # Hard Constraint: Tidak boleh melebihi budget harian
                 if new_g > daily_limit:
                     continue 
 
-                # Soft Constraint: Variasi Menu
+                # Soft Constraint: Penalti variasi menu
                 variety_penalty = 0.0
                 if recipe['id'] in global_used_ids:
-                    variety_penalty = 2000.0 # Penalti ringan (pernah makan di hari lain)
+                    # Penalti ringan (pernah makan di hari lain)
+                    variety_penalty = 2000.0 
                 
                 current_day_ids = [r['id'] for r in path]
                 if recipe['id'] in current_day_ids:
-                    variety_penalty += 99999.0 # Penalti berat (makan menu sama hari ini)
+                    # Penalti berat (makan menu sama hari ini)
+                    variety_penalty += 99999.0 
 
                 # Heuristik Kalori h(n)
                 current_cal_path = sum(r['total_calories'] for r in path)
                 new_cal = current_cal_path + recipe['total_calories']
                 h = float(heuristic(new_cal, target_cal))
                 
-                # Pembobotan & Normalisasi Skala
-                # Bagi harga dengan 1000 agar 1 poin ~ Rp 1.000 (sebanding dengan kalori)
+                # Normalisasi & Pembobotan Skor
                 normalized_cost = new_g / 1000.0 
-                
                 w_cost = 1.0
                 w_cal = 1.5
                 
-                # f(n) = g(n) + h(n)
                 new_f = (normalized_cost * w_cost) + variety_penalty + (h * w_cal)
                 
                 new_path = path + [recipe]
                 heapq.heappush(open_set, (new_f, random.random(), new_path))
         
+        # Simpan hasil harian jika ditemukan
         if best_daily_menu:
-            # Simpan ID agar besok tidak monoton
             for r in best_daily_menu:
                 global_used_ids.add(r['id'])
             
