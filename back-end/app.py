@@ -9,6 +9,16 @@ app = Flask(__name__)
 # Izinkan akses dari mana saja (mempermudah development)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
+@app.route('/allergens', methods=['GET'])
+def get_allergens():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT id, name FROM allergens")
+    allergens = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(allergens)
+
 @app.route('/generate-menu', methods=['POST'])
 def generate_menu():
     try:
@@ -30,7 +40,13 @@ def generate_menu():
         
         # Ambil Detail Bahan & Harga
         cursor.execute("""
-            SELECT ri.recipe_id, i.name, i.price_per_unit, i.unit, i.allergen_tag, ri.amount_needed
+            SELECT 
+                ri.recipe_id, 
+                i.name, 
+                i.price_per_unit, 
+                i.unit, 
+                i.allergen_id,
+                ri.amount_needed
             FROM recipe_ingredients ri
             JOIN ingredients i ON ri.ingredient_id = i.id
         """)

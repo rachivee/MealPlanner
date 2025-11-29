@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from "vue";
+import { ref, computed, onMounted } from "vue";
 import axios from "axios";
 
 const days = ref(1);
@@ -7,30 +7,42 @@ const calories = ref(2000);
 const budget = ref(100000);
 
 const myPantry = ref([]);
-const pantryInput = ref(""); 
-const myAllergies = ref([]);
-const allergyInput = ref("");
+const pantryInput = ref("");
+
+// --- PERUBAHAN 1: State untuk Alergi (Dropdown/Checkbox) ---
+const availableAllergens = ref([]); // List alergi dari Database
+const selectedAllergies = ref([]);  // ID alergi yang dipilih user
 
 const menuResult = ref(null);
 const loading = ref(false);
 const errorMessage = ref("");
-const warningMessages = ref([]); 
+const warningMessages = ref([]);
 const activeTab = ref("informasi");
 
-// --- LOGIKA BARU: REALISTIC SHOPPING LIST ---
+// --- Fetch Data Alergi saat Aplikasi Dibuka ---
+onMounted(async () => {
+  try {
+    const response = await axios.get("http://127.0.0.1:5000/allergens");
+    availableAllergens.value = response.data;
+  } catch (error) {
+    console.error("Gagal mengambil data alergi:", error);
+    // Opsional: Isi dummy data jika backend belum siap/error
+    // availableAllergens.value = [{id: 1, name: 'Dummy Kacang'}, {id: 2, name: 'Dummy Susu'}];
+  }
+});
+
+// --- LOGIKA REALISTIC SHOPPING LIST ---
 const shoppingList = computed(() => {
   if (!menuResult.value || !Array.isArray(menuResult.value)) return [];
-  
+
   const map = {};
 
-  // 1. Kumpulkan semua kebutuhan bahan
   menuResult.value.forEach((plan) => {
     ["breakfast", "lunch", "dinner"].forEach((mealKey) => {
       const meal = plan[mealKey];
       if (!meal || !meal.missing_ingredients) return;
-      
+
       meal.missing_ingredients.forEach((item) => {
-        // item sekarang adalah object {name, amount, unit, price_per_unit}
         if (!map[item.name]) {
           map[item.name] = {
             name: item.name,
@@ -39,29 +51,25 @@ const shoppingList = computed(() => {
             price: item.price_per_unit
           };
         }
-        // Akumulasi jumlah yang dibutuhkan
         map[item.name].totalAmount += item.amount;
       });
     });
   });
 
-  // 2. Hitung Berapa Pack yang harus dibeli
   return Object.values(map).map((item) => {
-    // Pembulatan ke atas (beli kemasan utuh)
     const packsToBuy = Math.ceil(item.totalAmount);
     const totalPrice = packsToBuy * item.price;
 
     return {
       name: item.name,
-      amountNeeded: item.totalAmount, // misal 0.4
+      amountNeeded: item.totalAmount,
       unit: item.unit,
-      packsToBuy: packsToBuy,         // misal 1
-      totalPrice: totalPrice          // Harga 1 pack
+      packsToBuy: packsToBuy,
+      totalPrice: totalPrice
     };
   });
 });
 
-// Hitung total belanja keseluruhan
 const totalShoppingCost = computed(() => {
   return shoppingList.value.reduce((sum, item) => sum + item.totalPrice, 0);
 });
@@ -77,6 +85,7 @@ const todaysMenu = computed(() => {
   return list.filter(item => item.name);
 });
 
+// Logika Pantry (Bahan yang dimiliki)
 const addPantry = () => {
   if (pantryInput.value.trim() !== "" && !myPantry.value.includes(pantryInput.value.toLowerCase())) {
     myPantry.value.push(pantryInput.value.toLowerCase());
@@ -85,14 +94,7 @@ const addPantry = () => {
 };
 const removePantry = (index) => myPantry.value.splice(index, 1);
 
-const addAllergy = () => {
-  if (allergyInput.value.trim() !== "" && !myAllergies.value.includes(allergyInput.value.toLowerCase())) {
-    myAllergies.value.push(allergyInput.value.toLowerCase());
-    allergyInput.value = "";
-  }
-};
-const removeAllergy = (index) => myAllergies.value.splice(index, 1);
-
+// Generate Menu
 const generateMenu = async () => {
   loading.value = true;
   menuResult.value = null;
@@ -105,7 +107,7 @@ const generateMenu = async () => {
       calories: calories.value,
       budget: budget.value,
       pantry: myPantry.value,
-      allergies: myAllergies.value,
+      allergies: selectedAllergies.value, // Mengirim Array of IDs (misal: [2, 4])
     });
 
     if (response.data.error) {
@@ -128,7 +130,7 @@ const generateMenu = async () => {
   <div class="app-wrapper">
     <header class="app-header">
       <div class="header-content">
-        <h1 class="app-title">MealPlanner</h1>
+        <h1 class="app-title">MealPlanner AI</h1>
         <div class="header-decoration">🍽️</div>
       </div>
     </header>
@@ -147,7 +149,7 @@ const generateMenu = async () => {
             <p class="tab-desc">Isi form dibawah sesuaikan dengan preferensi anda</p>
 
             <div class="form-group">
-              <label>Batas Kalori</label>
+              <label>Batas Kalori Harian</label>
               <input type="number" v-model="calories" placeholder="Contoh: 2000" />
             </div>
 
@@ -158,21 +160,31 @@ const generateMenu = async () => {
 
             <div class="form-group">
               <label>Alergi</label>
-              <div class="input-group">
-                <input type="text" v-model="allergyInput" @keyup.enter="addAllergy" placeholder="Ketik alergi..." />
-                <button class="btn-add" @click="addAllergy">+</button>
-              </div>
-              <div class="tags">
-                <span v-for="(item, index) in myAllergies" :key="index" class="tag allergy">
-                  {{ item }} <span class="remove-btn" @click="removeAllergy(index)">×</span>
-                </span>
+              <div class="allergy-grid">
+                <div v-if="availableAllergens.length === 0" class="loading-allergy">
+                  Memuat data alergi...
+                </div>
+                
+                <div 
+                  v-for="allergen in availableAllergens" 
+                  :key="allergen.id" 
+                  class="checkbox-item"
+                >
+                  <input 
+                    type="checkbox" 
+                    :id="'alg-' + allergen.id" 
+                    :value="allergen.id" 
+                    v-model="selectedAllergies"
+                  />
+                  <label :for="'alg-' + allergen.id">{{ allergen.name }}</label>
+                </div>
               </div>
             </div>
 
             <div class="form-group">
-              <label>Bahan Masakan Tersedia</label>
+              <label>Bahan Masakan yang Sudah Dimiliki</label>
               <div class="input-group">
-                <input type="text" v-model="pantryInput" @keyup.enter="addPantry" placeholder="Ketik bahan..." />
+                <input type="text" v-model="pantryInput" @keyup.enter="addPantry" placeholder="Ketik bahan lalu Enter..." />
                 <button class="btn-add" @click="addPantry">+</button>
               </div>
               <div class="tags">
@@ -188,7 +200,7 @@ const generateMenu = async () => {
             </div>
 
             <button class="btn-generate" @click="generateMenu" :disabled="loading">
-              {{ loading ? "Sedang Berpikir..." : "Buat Rencana" }}
+              {{ loading ? "Sedang Berpikir..." : "Buat Rencana Menu" }}
             </button>
           </div>
 
@@ -203,7 +215,7 @@ const generateMenu = async () => {
             </div>
 
             <div v-if="!menuResult && !errorMessage" class="empty-state">
-              <p>Belum ada hasil. Klik "Buat Rencana".</p>
+              <p>Belum ada hasil. Silakan isi form dan klik "Buat Rencana Menu".</p>
             </div>
 
             <div v-else-if="menuResult" class="results-and-shopping">
@@ -212,7 +224,7 @@ const generateMenu = async () => {
                   <div class="day-header">
                     <h4>Hari ke-{{ plan.day }}</h4>
                     <div class="day-stats">
-                      <span class="stat-badge cost">Est. Makan: Rp {{ plan.estimated_cost.toLocaleString('id-ID') }}</span>
+                      <span class="stat-badge cost">Rp {{ plan.estimated_cost.toLocaleString('id-ID') }}</span>
                       <span class="stat-badge cal">🔥 {{ plan.total_calories }} kkal</span>
                     </div>
                   </div>
@@ -224,39 +236,37 @@ const generateMenu = async () => {
                     <small v-if="plan[meal].missing_ingredients.length" style="display:block; margin-top:2px;">
                       <span style="color:#d32f2f;">Beli: </span> 
                       <span v-for="(ing, i) in plan[meal].missing_ingredients" :key="i">
-                        {{ ing.name }} ({{ ing.amount }} {{ ing.unit }}){{ i < plan[meal].missing_ingredients.length - 1 ? ', ' : '' }}
+                        {{ ing.name }} ({{ ing.amount.toFixed(2) }} {{ ing.unit }}){{ i < plan[meal].missing_ingredients.length - 1 ? ', ' : '' }}
                       </span>
                     </small>
                   </div>
                 </div>
               </div>
 
-              <div class="shopping-box card" style="margin-top: 16px; border: 2px solid #2d5016;">
+              <div class="shopping-box card" style="margin-top: 20px; border: 2px solid #2d5016;">
                 <h4 style="margin-top: 0; color: #2d5016; text-align:center;">🛒 DAFTAR BELANJA TOTAL</h4>
                 <p style="text-align:center; font-size:13px; color:#666; margin-bottom:15px;">
-                  Estimasi belanja (Beli Kemasan Utuh)
+                  Harga kemasan yang umum tersedia di pasaran
                 </p>
 
                 <ul v-if="shoppingList.length" style="list-style: none; padding: 0; margin: 0">
-                  <li v-for="(it, idx) in shoppingList" :key="idx" style="padding: 10px 0; border-bottom: 1px dashed #ccc; display: flex; justify-content: space-between; align-items: center;">
-                    
+                  <li v-for="(it, idx) in shoppingList" :key="idx" class="shopping-item">
                     <div style="display:flex; flex-direction:column;">
                       <span style="font-weight:bold; font-size:14px;">{{ it.name }}</span>
                       <span style="font-size:12px; color:#555;">
-                        Butuh: {{ it.amountNeeded.toFixed(1) }} {{ it.unit }} 
+                        Butuh: {{ it.amountNeeded.toFixed(2) }} {{ it.unit }} 
                         → <strong>Beli {{ it.packsToBuy }} Pack</strong>
                       </span>
                     </div>
-
                     <span style="font-weight: bold; color: #d32f2f; font-size:14px;">
                       Rp {{ it.totalPrice.toLocaleString('id-ID') }}
                     </span>
                   </li>
                 </ul>
-                <p v-else style="color:#999; font-style:italic; text-align:center;">Semua bahan tersedia di kulkas.</p>
+                <p v-else style="color:#999; font-style:italic; text-align:center;">Semua bahan tersedia di pantry!</p>
 
                 <div v-if="shoppingList.length" style="margin-top:20px; padding-top:10px; border-top:2px solid #eee; display:flex; justify-content:space-between; align-items:center;">
-                  <strong style="font-size:16px;">TOTAL HARUS DIBAYAR:</strong>
+                  <strong style="font-size:16px;">EST. TOTAL BIAYA:</strong>
                   <strong style="font-size:18px; color:#2d5016;">Rp {{ totalShoppingCost.toLocaleString('id-ID') }}</strong>
                 </div>
               </div>
@@ -268,7 +278,7 @@ const generateMenu = async () => {
       <div class="right-panel">
         <div class="menu-today">
           <h2>MAKANANMU HARI INI</h2>
-          <p v-if="!menuResult" class="no-menu">Buat rencana terlebih dahulu</p>
+          <p v-if="!menuResult" class="no-menu">Menu belum dibuat</p>
           <div v-else class="menu-list">
             <div v-for="meal in todaysMenu" :key="meal.time" class="menu-item">
               <div class="menu-item-left">
@@ -310,7 +320,7 @@ const generateMenu = async () => {
 }
 
 .header-content {
-  max-width: 1400px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 0 20px;
   display: flex;
@@ -319,35 +329,26 @@ const generateMenu = async () => {
 }
 
 .app-title {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: bold;
   margin: 0;
   letter-spacing: 1px;
 }
 
 .header-decoration {
-  font-size: 40px;
+  font-size: 30px;
 }
 
 /* MAIN CONTAINER */
 .main-container {
   flex: 1;
-  max-width: 1400px;
+  max-width: 1200px;
   margin: 0 auto;
   width: 100%;
   padding: 30px 20px;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.2fr 0.8fr;
   gap: 30px;
-}
-
-/* PANELS */
-.left-panel {
-  flex: 1;
-}
-
-.right-panel {
-  flex: 1;
 }
 
 /* CARD STYLES */
@@ -363,57 +364,40 @@ const generateMenu = async () => {
   font-size: 20px;
   font-weight: bold;
   color: #1a1a1a;
-  letter-spacing: 1px;
 }
 
-/* TAB NAVIGATION */
+/* TABS */
 .tabs {
   display: flex;
-  gap: 0;
   border-bottom: 2px solid #e0e0e0;
   margin-bottom: 25px;
 }
 
 .tab-btn {
   flex: 1;
-  padding: 12px 16px;
+  padding: 12px;
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 14px;
   font-weight: 600;
   color: #666;
   border-bottom: 3px solid transparent;
   transition: all 0.3s ease;
-  text-align: center;
-  text-transform: capitalize;
 }
 
-.tab-btn:hover {
+.tab-btn:hover, .tab-btn.active {
   color: #2d5016;
-  background: #f5f5f5;
+  background: #f9f9f9;
 }
 
 .tab-btn.active {
-  color: #2d5016;
   border-bottom-color: #2d5016;
 }
 
-/* TAB CONTENT */
 .tab-content {
   animation: fadeIn 0.3s ease;
 }
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(5px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 
 .tab-desc {
   color: #777;
@@ -422,7 +406,7 @@ const generateMenu = async () => {
   font-style: italic;
 }
 
-/* FORM GROUPS */
+/* FORM STYLES */
 .form-group {
   margin-bottom: 20px;
 }
@@ -438,11 +422,10 @@ const generateMenu = async () => {
 .form-group input[type="number"],
 .form-group input[type="text"] {
   width: 100%;
-  padding: 10px 14px;
+  padding: 10px;
   border: 1.5px solid #ddd;
   border-radius: 8px;
   font-size: 14px;
-  transition: border-color 0.3s ease;
 }
 
 .form-group input:focus {
@@ -451,77 +434,107 @@ const generateMenu = async () => {
   box-shadow: 0 0 0 3px rgba(45, 80, 22, 0.1);
 }
 
-/* INPUT GROUP */
+/* --- STYLE UNTUK CHECKBOX ALERGI --- */
+.allergy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  background: #f8f9fa;
+  padding: 15px;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  background: white;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #eee;
+  transition: all 0.2s;
+}
+
+.checkbox-item:hover {
+  border-color: #a8d5a8;
+  background: #f0fff4;
+}
+
+.checkbox-item input {
+  width: 16px;
+  height: 16px;
+  accent-color: #2d5016;
+  cursor: pointer;
+}
+
+.checkbox-item label {
+  margin: 0 !important;
+  font-weight: normal !important;
+  cursor: pointer;
+  color: #333 !important;
+}
+
+.loading-allergy {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: #999;
+  font-style: italic;
+  font-size: 13px;
+}
+
+/* INPUT GROUP & TAGS */
 .input-group {
   display: flex;
   gap: 8px;
   margin-bottom: 10px;
 }
 
-.input-group input {
-  flex: 1;
-}
-
 .btn-add {
   background: #a8d5a8;
   color: white;
   border: none;
-  padding: 10px 16px;
+  padding: 0 16px;
   border-radius: 8px;
-  font-size: 18px;
+  font-size: 20px;
   cursor: pointer;
-  transition: background 0.3s ease;
   font-weight: bold;
 }
+.btn-add:hover { background: #90c890; }
 
-.btn-add:hover {
-  background: #90c890;
-}
-
-/* TAGS */
 .tags {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 15px;
-  min-height: 20px;
 }
 
 .tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
   background: #e8f5e9;
   border: 1px solid #a8d5a8;
   color: #2d5016;
+  padding: 4px 10px;
   border-radius: 20px;
   font-size: 13px;
-  font-weight: 600;
-}
-
-.tag.allergy {
-  background: #ffebee;
-  border-color: #ef5350;
-  color: #c62828;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .remove-btn {
   cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  opacity: 0.7;
-  transition: opacity 0.2s;
+  font-weight: bold;
+  opacity: 0.6;
 }
-
-.remove-btn:hover {
-  opacity: 1;
-}
+.remove-btn:hover { opacity: 1; }
 
 /* BUTTON GENERATE */
 .btn-generate {
   width: 100%;
-  padding: 14px 20px;
+  padding: 14px;
   background: #2d5016;
   color: white;
   border: none;
@@ -529,284 +542,113 @@ const generateMenu = async () => {
   font-size: 16px;
   font-weight: bold;
   cursor: pointer;
-  transition: background 0.3s ease, transform 0.2s ease;
-  margin-top: 20px;
-  letter-spacing: 0.5px;
+  margin-top: 10px;
+  transition: background 0.3s;
 }
+.btn-generate:hover:not(:disabled) { background: #1f3810; }
+.btn-generate:disabled { background: #ccc; cursor: not-allowed; }
 
-.btn-generate:hover:not(:disabled) {
-  background: #1f3810;
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(45, 80, 22, 0.25);
-}
-
-.btn-generate:disabled {
-  background: #bdbdbd;
-  cursor: not-allowed;
-}
-
-/* FEEDBACK MESSAGES (Error & Empty State) */
-.error-msg {
-  background: #ffebee;
-  color: #b71c1c;
-  padding: 15px;
-  border-radius: 8px;
-  border-left: 4px solid #ef5350;
-  margin-bottom: 20px;
-  font-size: 14px;
-}
-
-.empty-state {
-  padding: 30px 20px;
-  text-align: center;
-  color: #999;
-}
-
-.empty-state p {
-  margin: 0;
-  font-style: italic;
-}
-
-/* STYLE BARU: WARNING BOX */
-.warning-box {
-  background-color: #fff3cd;
-  color: #856404;
-  border: 1px solid #ffeeba;
-  padding: 15px;
-  border-radius: 8px;
-  margin-bottom: 20px;
-}
-.warning-box h4 { margin: 0 0 8px 0; font-size: 14px; }
-.warning-box ul { margin: 0; padding-left: 20px; font-size: 13px; }
-
-/* RESULTS TAB */
-.results-tab {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
+/* RESULTS STYLES */
 .result-item {
   padding: 15px;
   background: #f9f9f9;
   border-radius: 8px;
   border-left: 4px solid #2d5016;
-}
-
-.result-item h4 {
-  margin: 0 0 10px 0;
-  color: #2d5016;
-  font-size: 14px;
-}
-
-.meal-detail {
-  font-size: 13px;
-  margin: 5px 0;
-  color: #555;
+  margin-bottom: 15px;
 }
 
 .day-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   border-bottom: 1px solid #e0e0e0;
   padding-bottom: 8px;
 }
 
-.day-header h4 {
-  margin: 0; /* Hilangkan margin bawaan h4 agar sejajar */
-}
-
-.day-stats {
-  display: flex;
-  gap: 8px;
-}
+.day-header h4 { margin: 0; color: #2d5016; }
 
 .stat-badge {
   font-size: 12px;
-  font-weight: bold;
   padding: 4px 8px;
   border-radius: 6px;
+  font-weight: bold;
+  margin-left: 5px;
+}
+.stat-badge.cost { background: #fff3cd; color: #856404; }
+.stat-badge.cal { background: #d4edda; color: #155724; }
+
+.meal-detail {
+  font-size: 14px;
+  margin: 8px 0;
+  color: #444;
+  line-height: 1.4;
 }
 
-.stat-badge.cost {
-  background-color: #fff3cd; /* Kuning muda */
-  color: #856404;
-  border: 1px solid #ffeeba;
-}
-
-.stat-badge.cal {
-  background-color: #d4edda; /* Hijau muda */
-  color: #155724;
-  border: 1px solid #c3e6cb;
-}
-
-/* BAHAN LIST */
-.bahan-list {
+.shopping-item {
+  padding: 10px 0;
+  border-bottom: 1px dashed #ccc;
   display: flex;
-  flex-direction: column;
-  gap: 15px;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.bahan-item {
-  padding: 15px;
-  background: #f9f9f9;
-  border-radius: 8px;
-  border-left: 4px solid #ff6b6b;
-}
-
-.bahan-item h4 {
-  margin: 0 0 10px 0;
-  color: #ff6b6b;
+.warning-box {
+  background: #fff3cd;
+  color: #856404;
+  padding: 10px;
+  border-radius: 6px;
+  margin-bottom: 15px;
   font-size: 14px;
 }
-
-.bahan-item ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
+.error-msg {
+  background: #ffebee;
+  color: #c62828;
+  padding: 10px;
+  border-radius: 6px;
+  margin-bottom: 15px;
 }
 
-.bahan-item li {
-  font-size: 13px;
-  color: #555;
-  margin: 5px 0;
-  padding-left: 10px;
-}
-
-/* RIGHT PANEL - MENU TODAY */
+/* RIGHT PANEL */
 .menu-today {
   background: white;
   border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-  padding: 30px;
+  padding: 25px;
 }
-
-.menu-today h2 {
-  margin: 0 0 15px 0;
-  font-size: 18px;
-  font-weight: bold;
-  color: #1a1a1a;
-  letter-spacing: 1px;
-}
-
-.no-menu {
-  text-align: center;
-  color: #999;
-  padding: 40px 20px;
-  font-style: italic;
-}
-
-.menu-list {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
+.menu-today h2 { margin-top: 0; font-size: 18px; color: #333; }
+.no-menu { text-align: center; color: #999; margin: 30px 0; font-style: italic; }
 
 .menu-item {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
   padding: 15px;
   background: #2d5016;
   color: white;
   border-radius: 8px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  margin-bottom: 10px;
+  transition: transform 0.2s;
 }
+.menu-item:hover { transform: translateX(5px); }
 
-.menu-item:hover {
-  transform: translateX(5px);
-  box-shadow: 0 6px 20px rgba(45, 80, 22, 0.3);
-}
-
-.menu-item-left h3 {
-  margin: 0 0 5px 0;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.menu-item-left p {
-  margin: 0;
-  font-size: 13px;
-  opacity: 0.9;
-}
+.menu-item-left h3 { margin: 0 0 5px 0; font-size: 15px; }
+.menu-item-left p { margin: 0; font-size: 13px; opacity: 0.9; }
 
 .menu-item-right {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
-  background: rgba(255, 255, 255, 0.2);
-  padding: 8px 12px;
+  background: rgba(255,255,255,0.2);
+  padding: 5px 10px;
   border-radius: 6px;
-  font-size: 13px;
-  text-align: center;
+  min-width: 70px;
 }
-
-.day-num {
-  font-size: 11px;
-  opacity: 0.8;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.date {
-  font-size: 18px;
-  font-weight: bold;
-}
-
-.time-info {
-  font-size: 11px;
-  opacity: 0.8;
-}
+.day-num { font-size: 10px; text-transform: uppercase; }
+.date { font-size: 18px; font-weight: bold; }
+.time-info { font-size: 10px; }
 
 /* RESPONSIVE */
-@media (max-width: 1024px) {
-  .main-container {
-    grid-template-columns: 1fr;
-    gap: 20px;
-  }
-}
-
-@media (max-width: 768px) {
-  .app-header {
-    padding: 15px 0;
-  }
-
-  .app-title {
-    font-size: 22px;
-  }
-
-  .header-decoration {
-    font-size: 30px;
-  }
-
-  .main-container {
-    padding: 20px 15px;
-  }
-
-  .card {
-    padding: 20px;
-  }
-
-  .tabs {
-    gap: 5px;
-  }
-
-  .tab-btn {
-    font-size: 12px;
-    padding: 10px 8px;
-  }
-
-  .menu-item {
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .menu-item-right {
-    width: 100%;
-    flex-direction: row;
-  }
+@media (max-width: 900px) {
+  .main-container { grid-template-columns: 1fr; }
 }
 </style>
