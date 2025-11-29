@@ -15,10 +15,16 @@ const selectedAllergies = ref([]);
 
 // Hasil dan status UI
 const menuResult = ref(null);
+const aiDescriptionResult = ref("");
 const loading = ref(false);
 const errorMessage = ref("");
 const warningMessages = ref([]);
 const activeTab = ref("informasi");
+const expandedRecipes = ref({});
+
+const toggleRecipe = (uniqueKey) => {
+  expandedRecipes.value[uniqueKey] = !expandedRecipes.value[uniqueKey];
+};
 
 // Ambil data alergi saat aplikasi pertama kali dimuat
 onMounted(async () => {
@@ -119,6 +125,7 @@ const generateMenu = async () => {
     } else {
       menuResult.value = response.data.menu;
       warningMessages.value = response.data.warnings || [];
+      aiDescriptionResult.value = response.data.ai_description || "";
       activeTab.value = 'hasil';
     }
   } catch (error) {
@@ -223,6 +230,15 @@ const generateMenu = async () => {
             </div>
 
             <div v-else-if="menuResult" class="results-and-shopping">
+              <div v-if="aiDescriptionResult" class="ai-box card">
+              <div class="ai-header">
+                <span class="sparkle-icon">✨</span> 
+                <h4>Kata Ahli Gizi (AI)</h4>
+              </div>
+              <p style="white-space: pre-line;">{{ aiDescriptionResult }}</p>
+            </div>
+            <div class="results-tab">
+              </div>
               <div class="results-tab">
                 <div v-for="plan in menuResult" :key="plan.day" class="result-item">
                   <div class="day-header">
@@ -234,16 +250,33 @@ const generateMenu = async () => {
                   </div>
                   
                   <div v-for="meal in ['breakfast', 'lunch', 'dinner']" :key="meal" class="meal-detail">
-                    <strong>{{ meal === 'breakfast' ? 'Sarapan' : meal === 'lunch' ? 'Siang' : 'Malam' }}:</strong> 
-                    {{ plan[meal].name }}
+                    <div class="meal-header-row">
+                      <strong style="min-width: 90px; margin-right: 2px;">
+                        {{ meal === 'breakfast' ? 'Sarapan' : meal === 'lunch' ? 'Siang' : 'Malam' }}:
+                      </strong> 
+                      
+                      <span class="meal-name">{{ plan[meal].name }}</span>
+                      
+                      <button 
+                        class="btn-recipe-toggle" 
+                        @click="toggleRecipe(plan.day + '-' + meal)"
+                      >
+                        {{ expandedRecipes[plan.day + '-' + meal] ? 'Tutup Resep' : 'Lihat Cara Masak' }}
+                      </button>
+                    </div>
+
+                    <div v-if="expandedRecipes[plan.day + '-' + meal]" class="ai-recipe-content">
+                      <p><em>{{ plan[meal].ai_instruction }}</em></p>
+                    </div>
                     
-                    <small v-if="plan[meal].missing_ingredients.length" style="display:block; margin-top:2px;">
+                    <small v-if="plan[meal].missing_ingredients.length" style="display:block; margin-top:5px;">
                       <span style="color:#d32f2f;">Beli: </span> 
                       <span v-for="(ing, i) in plan[meal].missing_ingredients" :key="i">
                         {{ ing.name }} ({{ ing.amount.toFixed(2) }} {{ ing.unit }}){{ i < plan[meal].missing_ingredients.length - 1 ? ', ' : '' }}
                       </span>
                     </small>
                   </div>
+
                 </div>
               </div>
 
@@ -612,6 +645,39 @@ const generateMenu = async () => {
   padding: 10px;
   border-radius: 6px;
   margin-bottom: 15px;
+}
+
+.meal-name {
+  font-weight: bold;
+  color: #2d5016;
+}
+
+.btn-recipe-toggle {
+  background: none;
+  border: 1px solid #a8d5a8;
+  color: #2d5016;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-left: 8px;
+  transition: all 0.2s;
+}
+
+.btn-recipe-toggle:hover {
+  background: #2d5016;
+  color: white;
+}
+
+.ai-recipe-content {
+  background: #f1f8e9;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-top: 6px;
+  border-left: 3px solid #8bc34a;
+  font-size: 13px;
+  color: #33691e;
+  animation: fadeIn 0.3s;
 }
 
 /* RIGHT PANEL */
