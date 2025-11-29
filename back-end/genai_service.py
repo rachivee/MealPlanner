@@ -7,7 +7,7 @@ genai.configure(api_key=GOOGLE_API_KEY)
 model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
 
 def generate_recipes_batch(meal_plan_data):
-    # Menerima data meal plan, mengumpulkan semua nama masakan,  dan meminta resep ringkas sekaligus.
+    # Menerima data meal plan, mengumpulkan semua nama masakan, dan meminta resep ringkas sekaligus.
     if "error" in meal_plan_data:
         return {}
 
